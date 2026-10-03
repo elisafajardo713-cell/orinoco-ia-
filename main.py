@@ -13,7 +13,6 @@ from duckduckgo_search import DDGS
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-# Acepta NVIDIA_API_KEY o mantiene compatibilidad si la llamaste OPENCODE_API_KEY en Render
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY") or os.getenv("OPENCODE_API_KEY")
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -26,19 +25,20 @@ class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write("Bot de Soporte Técnico Orinoco Dev (NVIDIA API) activo!".encode('utf-8'))
+        self.wfile.write("Bot de Soporte Técnico Orinoco Dev (NVIDIA API Ultra-Rápido) activo!".encode('utf-8'))
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), SimpleHandler)
     server.serve_forever()
 
-# --- 2. BÚSQUEDA WEB EN TIEMPO REAL ---
-def ejecutar_busqueda_ddg(query):
+# --- 2. BÚSQUEDA WEB RÁPIDA (MAX 1.5 SEGUNDOS) ---
+def ejecutar_busqueda_rapida(query):
     try:
-        query_tecnica = f"solucion error soporte tecnico {query}"
+        query_tecnica = f"solucion error {query}"
         with DDGS() as ddgs:
-            resultados = list(ddgs.text(query_tecnica, max_results=3))
+            # max_results=2 para que devuelva datos mucho más rápido
+            resultados = list(ddgs.text(query_tecnica, max_results=2))
             if not resultados:
                 return None
             
@@ -47,17 +47,16 @@ def ejecutar_busqueda_ddg(query):
                 texto_resultados += f"- {r['title']}: {r['body']}\n"
             return texto_resultados
     except Exception as e:
-        logging.error(f"Error en búsqueda web técnica: {e}")
+        logging.error(f"Búsqueda web omitida/error: {e}")
         return None
 
 def requiere_busqueda_tecnica(texto):
-    palabras_clave = [
-        "error", "fallo", "codigo de error", "driver", "pantalla azul", 
-        "actualizar", "instalar", "formatear", "como usar", "tutorial", 
-        "solucionar", "no arranca", "lento", "bug", "problema", "configurar"
+    # Solo buscar si nombran un código de error o falla muy especifica
+    palabras_clave_criticas = [
+        "codigo de error", "pantalla azul", "bsod", "driver", "bug", "0x"
     ]
     texto_lower = texto.lower()
-    return any(p in texto_lower for p in palabras_clave)
+    return any(p in texto_lower for p in palabras_clave_criticas)
 
 def es_saludo(texto):
     saludos = ["hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "quien eres", "presentate", "que haces", "ayuda"]
@@ -90,7 +89,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto_usuario = update.message.text
 
-    # Responder saludos sencillos directamente
+    # Responder saludos de forma instantánea
     if es_saludo(texto_usuario):
         presentacion_corta = (
             "🛠️ **Soporte Técnico Orinoco Dev**\n"
@@ -101,30 +100,31 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     informacion_web = None
+    # Solo ejecutar búsqueda web si es estrictamente necesario, limitando el tiempo a 1.5s
     if requiere_busqueda_tecnica(texto_usuario):
-        informacion_web = await asyncio.to_thread(ejecutar_busqueda_ddg, texto_usuario)
+        try:
+            informacion_web = await asyncio.wait_for(
+                asyncio.to_thread(ejecutar_busqueda_rapida, texto_usuario), 
+                timeout=1.5
+            )
+        except asyncio.TimeoutError:
+            logging.info("Búsqueda web cancelada por tiempo límite para responder más rápido.")
+            informacion_web = None
 
     prompt_sistema = (
-        "Eres un Asistente Experto en Soporte Técnico Informático para el personal de la empresa Orinoco Dev, C.A.\n\n"
+        "Eres un Asistente Experto en Soporte Técnico Informático para la empresa Orinoco Dev, C.A.\n\n"
+        "INSTRUCCIÓN DE VELOCIDAD Y CONCISIÓN:\n"
+        "Sé breve, directo y conciso. Ve al grano inmediatamente con la solución paso a paso.\n\n"
         "ROL Y OBJETIVO:\n"
-        "Tu ÚNICA función es ofrecer asistencia técnica clara, estructurada, profesional y paso a paso sobre:\n"
-        "- Hardware (Mantenimiento, componentes, fallas informáticas, diagnósticos).\n"
-        "- Software y Sistemas Operativos (Windows, Linux, errores de instalación, drivers, optimización).\n"
-        "- Herramientas de Oficina y Productividad (Uso de Microsoft Word, Excel, PowerPoint, correo, etc.).\n"
-        "- Solución de errores y problemas comunes en computadoras y periféricos.\n\n"
-        "REGLAS ESTRICTAS DE SEGURIDAD:\n"
-        "1. NO respondas sobre datos internos de la empresa, finanzas, RIF, clientes, ventas o ubicación.\n"
-        "2. NO respondas preguntas generales fuera del ámbito informático o de soporte técnico. Si te preguntan algo ajeno, responde: 'Lo siento, mi función se limita estrictamente a brindar asistencia y soporte técnico informático para hardware, software y aplicaciones.'\n"
-        "3. Mantén la confidencialidad absoluta: NUNCA solicites ni reveles contraseñas ni información sensible.\n"
-        "4. Estructura siempre tus respuestas técnicas con viñetas y pasos numerados."
+        "Brindar asistencia sobre Hardware, Software, Sistemas Operativos, Herramientas de Oficina y solución de errores informáticos.\n\n"
+        "REGLAS DE SEGURIDAD Y RESTRICCIÓN:\n"
+        "1. NO respondas sobre datos internos, finanzas, RIF, clientes o ventas de la empresa.\n"
+        "2. NO respondas temas ajenos a la informática. Si te preguntan algo ajeno, indica brevemente que solo atiendes soporte técnico.\n"
+        "3. Estructura con viñetas o pasos numerados de forma sintética."
     )
 
     if informacion_web:
-        prompt_sistema += (
-            f"\n\nDATOS TÉCNICOS ADICIONALES OBTENIDOS DE BÚSQUEDA WEB:\n"
-            f"{informacion_web}\n"
-            f"Utiliza esta información solo si ayuda a solucionar técnicamente la falla planteada."
-        )
+        prompt_sistema += f"\n\nDATOS WEB:\n{informacion_web}"
 
     try:
         completion = client.chat.completions.create(
@@ -133,9 +133,8 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 {"role": "system", "content": prompt_sistema},
                 {"role": "user", "content": texto_usuario}
             ],
-            temperature=0.5,
-            top_p=1,
-            max_tokens=1024,
+            temperature=0.3, # Reducir temperatura acelerará la velocidad de respuesta
+            max_tokens=600,   # Reducir tokens acelerará la generación de texto
             stream=False
         )
         
@@ -143,7 +142,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logging.error(f"Error al conectar con la API de NVIDIA: {e}")
-        respuesta_ia = "⚠️ Ocurrió una incidencia técnica al conectar con el servidor de inteligencia artificial. Por favor, reintenta en unos instantes."
+        respuesta_ia = "⚠️ Ocurrió una incidencia técnica al conectar con el servidor. Por favor, reintenta."
 
     await update.message.reply_text(respuesta_ia)
 
@@ -156,5 +155,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
     
-    print("Bot de Soporte Técnico Orinoco Dev (NVIDIA API) activo...")
+    print("Bot de Soporte Técnico Orinoco Dev (NVIDIA API Ultra-Rápido) activo...")
     app.run_polling(drop_pending_updates=True)
