@@ -64,7 +64,6 @@ def es_saludo(texto):
     return any(s in texto_clean for s in saludos) or len(texto_clean) <= 4
 
 # --- 3. CONFIGURACIÓN CLIENTE OPENCODE ---
-# Se utiliza el endpoint oficial de la API en api.opencode.ai
 client = OpenAI(
     api_key=OPENCODE_API_KEY,
     base_url="https://api.opencode.ai/v1"
@@ -127,7 +126,6 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     try:
-        # Usamos el modelo GLM-5.3-Flash de OpenCode Go
         response = client.chat.completions.create(
             model="GLM-5.3-Flash",
             messages=[
@@ -137,16 +135,30 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
             temperature=0.3,
             max_tokens=1024
         )
-        respuesta_ia = response.choices[0].message.content
+        
+        # Validación flexible del tipo de respuesta devuelta por la API
+        if isinstance(response, str):
+            respuesta_ia = response
+        elif hasattr(response, 'choices') and response.choices:
+            respuesta_ia = response.choices[0].message.content
+        elif isinstance(response, dict):
+            if "choices" in response:
+                respuesta_ia = response["choices"][0]["message"]["content"]
+            elif "content" in response:
+                respuesta_ia = response["content"]
+            else:
+                respuesta_ia = str(response)
+        else:
+            respuesta_ia = str(response)
+
     except Exception as e:
-        logging.error(f"Error al conectar con la API de OpenCode: {e}")
+        logging.error(f"Error al procesar respuesta de la API: {e}")
         respuesta_ia = "⚠️ Ocurrió una incidencia técnica al conectar con la API. Por favor, reintenta en unos instantes."
 
     await update.message.reply_text(respuesta_ia)
 
 # --- 6. INICIALIZACIÓN DEL BOT ---
 if __name__ == "__main__":
-    # Iniciar servidor HTTP dummy en segundo plano para Render
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -154,5 +166,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
     
-    print("Bot de Soporte Técnico Orinoco IA (OpenCode Go) activo y escuchando...")
+    print("Bot de Soporte Técnico Orinoco IA activo y escuchando...")
     app.run_polling(drop_pending_updates=True)
