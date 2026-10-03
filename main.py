@@ -9,7 +9,7 @@ from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, Comma
 from openai import OpenAI
 from duckduckgo_search import DDGS
 
-# Cargar variables de entorno locales si existen
+# Cargar variables de entorno desde el archivo .env si existe
 load_dotenv()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -18,7 +18,7 @@ OPENCODE_API_KEY = os.getenv("OPENCODE_API_KEY")
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 if not TELEGRAM_TOKEN or not OPENCODE_API_KEY:
-    logging.error("❌ CRÍTICO: Configura TELEGRAM_TOKEN y OPENCODE_API_KEY en las Environment Variables de Render.")
+    logging.error("❌ CRÍTICO: Asegúrate de configurar TELEGRAM_TOKEN y OPENCODE_API_KEY en las Environment Variables de Render.")
 
 # --- 1. SERVIDOR DUMMY PARA MANTENER ACTIVO RENDER ---
 class SimpleHandler(BaseHTTPRequestHandler):
@@ -32,7 +32,7 @@ def run_dummy_server():
     server = HTTPServer(("0.0.0.0", port), SimpleHandler)
     server.serve_forever()
 
-# --- 2. BÚSQUEDA WEB EN TIEMPO REAL (SOPORTE TÉCNICO) ---
+# --- 2. BÚSQUEDA WEB EN TIEMPO REAL (ESPECIALIZADA EN SOPORTE TÉCNICO) ---
 def ejecutar_busqueda_ddg(query):
     try:
         query_tecnica = f"solucion error soporte tecnico {query}"
@@ -64,9 +64,10 @@ def es_saludo(texto):
     return any(s in texto_clean for s in saludos) or len(texto_clean) <= 4
 
 # --- 3. CONFIGURACIÓN CLIENTE OPENCODE ---
+# Se utiliza el endpoint oficial de la API en api.opencode.ai
 client = OpenAI(
     api_key=OPENCODE_API_KEY,
-    base_url="https://opencode.ai/v1" # Endpoint estándar para OpenCode
+    base_url="https://api.opencode.ai/v1"
 )
 
 # --- 4. COMANDO /start Y PRESENTACIÓN ---
@@ -126,7 +127,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     try:
-        # Se utiliza uno de los modelos disponibles en tu cuenta de OpenCode Go
+        # Usamos el modelo GLM-5.3-Flash de OpenCode Go
         response = client.chat.completions.create(
             model="GLM-5.3-Flash",
             messages=[
@@ -145,6 +146,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- 6. INICIALIZACIÓN DEL BOT ---
 if __name__ == "__main__":
+    # Iniciar servidor HTTP dummy en segundo plano para Render
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
