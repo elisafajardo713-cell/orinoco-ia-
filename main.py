@@ -18,6 +18,13 @@ OPENCODE_API_KEY = os.getenv("OPENCODE_API_KEY")
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+# Validar que las variables esenciales existan en Render
+if not OPENCODE_API_KEY:
+    logging.error("❌ CRÍTICO: La variable 'OPENCODE_API_KEY' no está configurada en las Environment Variables de Render.")
+
+if not TELEGRAM_TOKEN:
+    logging.error("❌ CRÍTICO: La variable 'TELEGRAM_TOKEN' no está configurada en las Environment Variables de Render.")
+
 # --- 1. SERVIDOR DUMMY PARA MANTENER ACTIVO RENDER ---
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -30,10 +37,10 @@ def run_dummy_server():
     server = HTTPServer(("0.0.0.0", port), SimpleHandler)
     server.serve_forever()
 
-# --- 2. BÚSQUEDA WEB EN TIEMPO REAL (SOLO TÉCNICA) ---
+# --- 2. BÚSQUEDA WEB EN TIEMPO REAL (ESPECIALIZADA EN SOPORTE TÉCNICO) ---
 def ejecutar_busqueda_ddg(query):
     try:
-        # Forzar que la búsqueda sea sobre soporte o solución de errores técnicos
+        # Optimizar la búsqueda orientándola a soporte informático
         query_tecnica = f"solucion error soporte tecnico {query}"
         with DDGS() as ddgs:
             resultados = list(ddgs.text(query_tecnica, max_results=3))
@@ -52,7 +59,7 @@ def requiere_busqueda_tecnica(texto):
     palabras_clave_tecnicas = [
         "error", "fallo", "codigo de error", "driver", "pantalla azul", 
         "actualizar", "instalar", "formatear", "como usar", "tutorial", 
-        "solucionar", "no arranca", "lento", "bug"
+        "solucionar", "no arranca", "lento", "bug", "problema", "configurar"
     ]
     texto_lower = texto.lower()
     return any(palabra in texto_lower for palabra in palabras_clave_tecnicas)
@@ -62,10 +69,15 @@ def es_saludo(texto):
     texto_clean = texto.lower().strip()
     return any(s in texto_clean for s in saludos) or len(texto_clean) <= 4
 
-# --- 3. CONFIGURACIÓN CLIENTE OPENCODE / OPENROUTER ---
+# --- 3. CONFIGURACIÓN CLIENTE OPENROUTER / OPENCODE ---
+# Se agregan los headers obligatorios para evitar el error 401 Unauthorized
 client = OpenAI(
     api_key=OPENCODE_API_KEY,
-    base_url="https://openrouter.ai/api/v1"
+    base_url="https://openrouter.ai/api/v1",
+    default_headers={
+        "HTTP-Referer": "https://render.com",
+        "X-Title": "Bot Soporte Orinoco Dev"
+    }
 )
 
 # --- 4. COMANDO /start Y PRESENTACIÓN ---
@@ -88,12 +100,12 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto_usuario = update.message.text
 
-    # Saludo y presentación corta
+    # Responder saludos localmente de forma rápida
     if es_saludo(texto_usuario):
         presentacion_corta = (
             "🛠️ **Soporte Técnico Orinoco Dev**\n"
             "¡Hola! Estoy listo para ayudarte con problemas de computadoras, programas, herramientas de oficina o soporte informático. "
-            "Escribe tu duda o Describe la falla que presentas."
+            "Escribe tu duda o describe la falla que presentas."
         )
         await update.message.reply_text(presentacion_corta, parse_mode="Markdown")
         return
@@ -102,7 +114,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if requiere_busqueda_tecnica(texto_usuario):
         informacion_web = await asyncio.to_thread(ejecutar_busqueda_ddg, texto_usuario)
 
-    # --- PROMPT DE SISTEMA: RESTRICCIÓN ESTRICTA A SOPORTE TÉCNICO Y PRIVACIDAD ---
+    # --- PROMPT DE SISTEMA: RESTRICCIÓN STRICTA A SOPORTE TÉCNICO Y PRIVACIDAD ---
     prompt_sistema = (
         "Eres un Asistente Experto en Soporte Técnico Informático para el personal de la empresa Orinoco Dev, C.A.\n\n"
         "ROL Y OBJETIVO:\n"
@@ -120,9 +132,9 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if informacion_web:
         prompt_sistema += (
-            f"\n\nDATOS TÉCNICOS ADICIONALES DE BÚSQUEDA WEB:\n"
+            f"\n\nDATOS TÉCNICOS ADICIONALES OBTENIDOS DE BÚSQUEDA WEB:\n"
             f"{informacion_web}\n"
-            f"Utiliza esta información solo si ayuda a solucionar técnicamente el problema del usuario."
+            f"Utiliza esta información solo si ayuda a solucionar técnicamente la falla planteada."
         )
 
     try:
@@ -132,22 +144,20 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 {"role": "system", "content": prompt_sistema},
                 {"role": "user", "content": texto_usuario}
             ],
-            temperature=0.3,  # Baja temperatura para respuestas precisas y estructuradas
+            temperature=0.3,
             max_tokens=1024
         )
         respuesta_ia = response.choices[0].message.content
     except Exception as e:
-        logging.error(f"Error al conectar con la API de OpenCode: {e}")
-        respuesta_ia = "⚠️ Ocurrió una incidencia técnica temporal al procesar tu consulta. Por favor, reintenta en unos instantes."
+        logging.error(f"Error al conectar con la API de OpenCode/OpenRouter: {e}")
+        respuesta_ia = "⚠️ Ocurrió una incidencia técnica al conectar con la API. Por favor, verifica la API Key en las variables de entorno de Render o reintenta en unos instantes."
 
     await update.message.reply_text(respuesta_ia)
 
 # --- 6. INICIALIZACIÓN DEL BOT ---
 if __name__ == "__main__":
-    # Iniciar servidor dummy para Render en un hilo secundario
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
-    # Construir y lanzar el bot de Telegram
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
