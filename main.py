@@ -2,43 +2,37 @@ import os
 import logging
 import threading
 import asyncio
-from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
-from google import genai
-from google.genai import types
+from openai import OpenAI
 from duckduckgo_search import DDGS
 
 # Cargar variables de entorno locales si existen
 load_dotenv()
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+OPENCODE_API_KEY = os.getenv("OPENCODE_API_KEY")
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Validar credenciales
-if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
-    logging.error("❌ CRÍTICO: Asegúrate de configurar TELEGRAM_TOKEN y GEMINI_API_KEY en las Environment Variables de Render.")
-
-# Inicializar cliente de Google Gemini
-ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+if not TELEGRAM_TOKEN or not OPENCODE_API_KEY:
+    logging.error("❌ CRÍTICO: Configura TELEGRAM_TOKEN y OPENCODE_API_KEY en las Environment Variables de Render.")
 
 # --- 1. SERVIDOR DUMMY PARA MANTENER ACTIVO RENDER ---
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write("Bot de Soporte Técnico Orinoco IA (Gemini) activo!".encode('utf-8'))
+        self.wfile.write("Bot de Soporte Técnico Orinoco IA (OpenCode) activo!".encode('utf-8'))
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), SimpleHandler)
     server.serve_forever()
 
-# --- 2. BÚSQUEDA WEB EN TIEMPO REAL (ESPECIALIZADA EN SOPORTE TÉCNICO) ---
+# --- 2. BÚSQUEDA WEB EN TIEMPO REAL (SOPORTE TÉCNICO) ---
 def ejecutar_busqueda_ddg(query):
     try:
         query_tecnica = f"solucion error soporte tecnico {query}"
@@ -69,7 +63,13 @@ def es_saludo(texto):
     texto_clean = texto.lower().strip()
     return any(s in texto_clean for s in saludos) or len(texto_clean) <= 4
 
-# --- 3. COMANDO /start Y PRESENTACIÓN ---
+# --- 3. CONFIGURACIÓN CLIENTE OPENCODE ---
+client = OpenAI(
+    api_key=OPENCODE_API_KEY,
+    base_url="https://opencode.ai/v1" # Endpoint estándar para OpenCode
+)
+
+# --- 4. COMANDO /start Y PRESENTACIÓN ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     presentacion = (
         "🛠️ **Asistente de Soporte Técnico - Orinoco Dev**\n\n"
@@ -82,14 +82,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(presentacion, parse_mode="Markdown")
 
-# --- 4. RESPUESTA Y LÓGICA PRINCIPAL DE SOPORTE TÉCNICO ---
+# --- 5. RESPUESTA Y LÓGICA PRINCIPAL ---
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
     texto_usuario = update.message.text
 
-    # Saludo rápido
+    # Responder saludos de forma directa
     if es_saludo(texto_usuario):
         presentacion_corta = (
             "🛠️ **Soporte Técnico Orinoco Dev**\n"
@@ -103,7 +103,6 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if requiere_busqueda_tecnica(texto_usuario):
         informacion_web = await asyncio.to_thread(ejecutar_busqueda_ddg, texto_usuario)
 
-    # Prompt de sistema para Gemini
     prompt_sistema = (
         "Eres un Asistente Experto en Soporte Técnico Informático para el personal de la empresa Orinoco Dev, C.A.\n\n"
         "ROL Y OBJETIVO:\n"
@@ -112,11 +111,11 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Software y Sistemas Operativos (Windows, Linux, errores de instalación, drivers, optimización).\n"
         "- Herramientas de Oficina y Productividad (Uso de Microsoft Word, Excel, PowerPoint, correo, etc.).\n"
         "- Solución de errores y problemas comunes en computadoras y periféricos.\n\n"
-        "REGLAS STRICTAS DE RESTRICCIÓN Y SEGURIDAD:\n"
+        "REGLAS ESTRICTAS DE RESTRICCIÓN Y SEGURIDAD:\n"
         "1. NO respondas sobre datos de la empresa, finanzas, RIF, clientes, ventas, ubicación o soporte operativo.\n"
-        "2. NO respondas preguntas generales fuera del ámbito informático o de soporte técnico (por ejemplo: cultura general, personajes ficticios, entretenimiento, deportes, cocina, etc.). Si te preguntan algo ajeno a la informática, responde cortésmente: 'Lo siento, mi función se limita estrictamente a brindar asistencia y soporte técnico informático para hardware, software y aplicaciones.'\n"
-        "3. Mantén la confidencialidad absoluta: NUNCA solicites ni reveles contraseñas, credenciales internas o código fuente privado.\n"
-        "4. Estructura siempre tus respuestas técnicas con viñetas, pasos numerados y un lenguaje claro y accesible."
+        "2. NO respondas preguntas generales fuera del ámbito informático o de soporte técnico. Si te preguntan algo ajeno, responde: 'Lo siento, mi función se limita estrictamente a brindar asistencia y soporte técnico informático para hardware, software y aplicaciones.'\n"
+        "3. Mantén la confidencialidad absoluta: NUNCA solicites ni reveles contraseñas ni información sensible.\n"
+        "4. Estructura siempre tus respuestas técnicas con viñetas y pasos numerados."
     )
 
     if informacion_web:
@@ -127,26 +126,25 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     try:
-        config_modelo = types.GenerateContentConfig(
-            system_instruction=prompt_sistema,
+        # Se utiliza uno de los modelos disponibles en tu cuenta de OpenCode Go
+        response = client.chat.completions.create(
+            model="GLM-5.3-Flash",
+            messages=[
+                {"role": "system", "content": prompt_sistema},
+                {"role": "user", "content": texto_usuario}
+            ],
             temperature=0.3,
+            max_tokens=1024
         )
-
-        response = ai_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=texto_usuario,
-            config=config_modelo
-        )
-        respuesta_ia = response.text
+        respuesta_ia = response.choices[0].message.content
     except Exception as e:
-        logging.error(f"Error al conectar con la API de Gemini: {e}")
-        respuesta_ia = "⚠️ Ocurrió una incidencia técnica al procesar tu solicitud con la API. Por favor, reintenta en unos instantes."
+        logging.error(f"Error al conectar con la API de OpenCode: {e}")
+        respuesta_ia = "⚠️ Ocurrió una incidencia técnica al conectar con la API. Por favor, reintenta en unos instantes."
 
     await update.message.reply_text(respuesta_ia)
 
-# --- 5. INICIALIZACIÓN DEL BOT ---
+# --- 6. INICIALIZACIÓN DEL BOT ---
 if __name__ == "__main__":
-    # Levantar el servidor HTTP en segundo plano para que Render no cierre el proceso
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
@@ -154,5 +152,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
     
-    print("Bot de Soporte Técnico Orinoco IA (Gemini) desplegado y escuchando...")
+    print("Bot de Soporte Técnico Orinoco IA (OpenCode Go) activo y escuchando...")
     app.run_polling(drop_pending_updates=True)
