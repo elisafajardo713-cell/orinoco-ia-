@@ -1,85 +1,158 @@
 import os
 import logging
+import threading
+import asyncio
+from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 from google import genai
 from google.genai import types
+from duckduckgo_search import DDGS
 
-# Cargar las variables del archivo .env
+# Cargar variables de entorno locales si existen
 load_dotenv()
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Configuración de logs para depuración
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# Inicializar el cliente oficial de Gemini
-ai_client = genai.Client(api_key=GEMINI_API_KEY)
+# Validar credenciales
+if not TELEGRAM_TOKEN or not GEMINI_API_KEY:
+    logging.error("❌ CRÍTICO: Asegúrate de configurar TELEGRAM_TOKEN y GEMINI_API_KEY en las Environment Variables de Render.")
 
-# Configuración del modelo y del sistema
-# Si en tu código original tenías un System Prompt o instrucciones iniciales,
-# las colocamos dentro de 'system_instruction'.
-model_config = types.GenerateContentConfig(
-    system_instruction="Responde de manera amable, útil y concisa.",
-    temperature=0.7,
-)
+# Inicializar cliente de Google Gemini
+ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Manejador del comando /start (conserva exactamente tu texto original)."""
-    # Aquí va exactamente tu mensaje de presentación tal y como lo tenías escrito
-    mensaje_bienvenida = (
-        "¡Hola! 👋 Soy tu asistente virtual impulsado por inteligencia artificial. "
-        "Estoy aquí para ayudarte en lo que necesites. ¿En qué te puedo colaborar hoy?"
+# --- 1. SERVIDOR DUMMY PARA MANTENER ACTIVO RENDER ---
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write("Bot de Soporte Técnico Orinoco IA (Gemini) activo!".encode('utf-8'))
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), SimpleHandler)
+    server.serve_forever()
+
+# --- 2. BÚSQUEDA WEB EN TIEMPO REAL (ESPECIALIZADA EN SOPORTE TÉCNICO) ---
+def ejecutar_busqueda_ddg(query):
+    try:
+        query_tecnica = f"solucion error soporte tecnico {query}"
+        with DDGS() as ddgs:
+            resultados = list(ddgs.text(query_tecnica, max_results=3))
+            if not resultados:
+                return None
+            
+            texto_resultados = ""
+            for r in resultados:
+                texto_resultados += f"- {r['title']}: {r['body']}\n"
+            return texto_resultados
+    except Exception as e:
+        logging.error(f"Error en búsqueda web técnica: {e}")
+        return None
+
+def requiere_busqueda_tecnica(texto):
+    palabras_clave_tecnicas = [
+        "error", "fallo", "codigo de error", "driver", "pantalla azul", 
+        "actualizar", "instalar", "formatear", "como usar", "tutorial", 
+        "solucionar", "no arranca", "lento", "bug", "problema", "configurar"
+    ]
+    texto_lower = texto.lower()
+    return any(palabra in texto_lower for palabra in palabras_clave_tecnicas)
+
+def es_saludo(texto):
+    saludos = ["hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "quien eres", "presentate", "que haces", "ayuda"]
+    texto_clean = texto.lower().strip()
+    return any(s in texto_clean for s in saludos) or len(texto_clean) <= 4
+
+# --- 3. COMANDO /start Y PRESENTACIÓN ---
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    presentacion = (
+        "🛠️ **Asistente de Soporte Técnico - Orinoco Dev**\n\n"
+        "¡Hola! Soy tu bot de asistencia técnica informática. Estoy diseñado para apoyar al personal en:\n"
+        "• Diagnóstico y solución de fallas de **hardware y equipos**.\n"
+        "• Mantenimiento y problemas de **software / sistemas operativos**.\n"
+        "• Uso y configuración de herramientas de ofimática (**Word, Excel, etc.**).\n"
+        "• Configuración de redes y aplicaciones corporativas.\n\n"
+        "¿En qué falla, error o consulta técnica te puedo ayudar hoy?"
     )
-    await update.message.reply_text(mensaje_bienvenida)
+    await update.message.reply_text(presentacion, parse_mode="Markdown")
 
-async def responder_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Recibe el mensaje del usuario y envía la consulta a Gemini API."""
+# --- 4. RESPUESTA Y LÓGICA PRINCIPAL DE SOPORTE TÉCNICO ---
+async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message or not update.message.text:
+        return
+
     texto_usuario = update.message.text
 
+    # Saludo rápido
+    if es_saludo(texto_usuario):
+        presentacion_corta = (
+            "🛠️ **Soporte Técnico Orinoco Dev**\n"
+            "¡Hola! Estoy listo para ayudarte con problemas de computadoras, programas, herramientas de oficina o soporte informático. "
+            "Escribe tu duda o describe la falla que presentas."
+        )
+        await update.message.reply_text(presentacion_corta, parse_mode="Markdown")
+        return
+
+    informacion_web = None
+    if requiere_busqueda_tecnica(texto_usuario):
+        informacion_web = await asyncio.to_thread(ejecutar_busqueda_ddg, texto_usuario)
+
+    # Prompt de sistema para Gemini
+    prompt_sistema = (
+        "Eres un Asistente Experto en Soporte Técnico Informático para el personal de la empresa Orinoco Dev, C.A.\n\n"
+        "ROL Y OBJETIVO:\n"
+        "Tu ÚNICA función es ofrecer asistencia técnica clara, estructurada, profesional y paso a paso sobre:\n"
+        "- Hardware (Mantenimiento, componentes, fallas informáticas, diagnósticos).\n"
+        "- Software y Sistemas Operativos (Windows, Linux, errores de instalación, drivers, optimización).\n"
+        "- Herramientas de Oficina y Productividad (Uso de Microsoft Word, Excel, PowerPoint, correo, etc.).\n"
+        "- Solución de errores y problemas comunes en computadoras y periféricos.\n\n"
+        "REGLAS STRICTAS DE RESTRICCIÓN Y SEGURIDAD:\n"
+        "1. NO respondas sobre datos de la empresa, finanzas, RIF, clientes, ventas, ubicación o soporte operativo.\n"
+        "2. NO respondas preguntas generales fuera del ámbito informático o de soporte técnico (por ejemplo: cultura general, personajes ficticios, entretenimiento, deportes, cocina, etc.). Si te preguntan algo ajeno a la informática, responde cortésmente: 'Lo siento, mi función se limita estrictamente a brindar asistencia y soporte técnico informático para hardware, software y aplicaciones.'\n"
+        "3. Mantén la confidencialidad absoluta: NUNCA solicites ni reveles contraseñas, credenciales internas o código fuente privado.\n"
+        "4. Estructura siempre tus respuestas técnicas con viñetas, pasos numerados y un lenguaje claro y accesible."
+    )
+
+    if informacion_web:
+        prompt_sistema += (
+            f"\n\nDATOS TÉCNICOS ADICIONALES OBTENIDOS DE BÚSQUEDA WEB:\n"
+            f"{informacion_web}\n"
+            f"Utiliza esta información solo si ayuda a solucionar técnicamente la falla planteada."
+        )
+
     try:
-        # Consulta a la API de Gemini usando el modelo gemini-2.5-flash
+        config_modelo = types.GenerateContentConfig(
+            system_instruction=prompt_sistema,
+            temperature=0.3,
+        )
+
         response = ai_client.models.generate_content(
             model="gemini-2.5-flash",
             contents=texto_usuario,
-            config=model_config
+            config=config_modelo
         )
-
-        respuesta_bot = response.text
-        await update.message.reply_text(respuesta_bot)
-
+        respuesta_ia = response.text
     except Exception as e:
-        logging.error(f"Error al consultar la API de Gemini: {e}")
-        await update.message.reply_text(
-            "Lo siento, ocurrió un error al procesar tu solicitud. Por favor intenta de nuevo en unos momentos."
-        )
+        logging.error(f"Error al conectar con la API de Gemini: {e}")
+        respuesta_ia = "⚠️ Ocurrió una incidencia técnica al procesar tu solicitud con la API. Por favor, reintenta en unos instantes."
 
-def main() -> None:
-    """Función principal para iniciar el bot."""
-    if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
-        print("Error: Asegúrate de configurar TELEGRAM_BOT_TOKEN y GEMINI_API_KEY en el archivo .env")
-        return
+    await update.message.reply_text(respuesta_ia)
 
-    # Construcción de la aplicación del bot con python-telegram-bot
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-
-    # Comandos y manejadores de mensajes
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder_mensaje))
-
-    print("Bot en marcha y escuchando mensajes...")
-    app.run_polling()
-
+# --- 5. INICIALIZACIÓN DEL BOT ---
 if __name__ == "__main__":
-    main()
+    # Levantar el servidor HTTP en segundo plano para que Render no cierre el proceso
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
+    
+    print("Bot de Soporte Técnico Orinoco IA (Gemini) desplegado y escuchando...")
+    app.run_polling(drop_pending_updates=True)
