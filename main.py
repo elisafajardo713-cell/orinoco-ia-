@@ -113,7 +113,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Solución de errores y problemas comunes en computadoras y periféricos.\n\n"
         "REGLAS ESTRICTAS DE RESTRICCIÓN Y SEGURIDAD:\n"
         "1. NO respondas sobre datos de la empresa, finanzas, RIF, clientes, ventas, ubicación o soporte operativo.\n"
-        "2. NO respondas preguntas generales fuera del ámbito informático o de soporte técnico. Si te preguntan algo ajeno, responde: 'Lo siento, mi función se limita estrictamente a brindar asistencia y soporte técnico informático para hardware, software y aplicaciones.'\n"
+        "2. NO respondas preguntas generales fuera del ámbito informático o de soporte técnico. Si te preguntan algo ajeno, responde: 'Lo siento, mi función se limita strictly a brindar asistencia y soporte técnico informático para hardware, software y aplicaciones.'\n"
         "3. Mantén la confidencialidad absoluta: NUNCA solicites ni reveles contraseñas ni información sensible.\n"
         "4. Estructura siempre tus respuestas técnicas con viñetas y pasos numerados."
     )
@@ -136,7 +136,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
             max_tokens=1024
         )
         
-        # Validación flexible del tipo de respuesta devuelta por la API
+        # Validación del formato devuelto por la API
         if isinstance(response, str):
             respuesta_ia = response
         elif hasattr(response, 'choices') and response.choices:
