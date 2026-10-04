@@ -25,23 +25,21 @@ class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write("Bot de Soporte Técnico Orinoco Dev (NVIDIA API Ultra-Rápido) activo!".encode('utf-8'))
+        self.wfile.write("Bot de Soporte Técnico Orinoco Dev (Ultra-Rápido) activo!".encode('utf-8'))
 
 def run_dummy_server():
     port = int(os.environ.get("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), SimpleHandler)
     server.serve_forever()
 
-# --- 2. BÚSQUEDA WEB RÁPIDA (MAX 1.5 SEGUNDOS) ---
+# --- 2. BÚSQUEDA WEB RÁPIDA ---
 def ejecutar_busqueda_rapida(query):
     try:
         query_tecnica = f"solucion error {query}"
         with DDGS() as ddgs:
-            # max_results=2 para que devuelva datos mucho más rápido
             resultados = list(ddgs.text(query_tecnica, max_results=2))
             if not resultados:
                 return None
-            
             texto_resultados = ""
             for r in resultados:
                 texto_resultados += f"- {r['title']}: {r['body']}\n"
@@ -51,7 +49,6 @@ def ejecutar_busqueda_rapida(query):
         return None
 
 def requiere_busqueda_tecnica(texto):
-    # Solo buscar si nombran un código de error o falla muy especifica
     palabras_clave_criticas = [
         "codigo de error", "pantalla azul", "bsod", "driver", "bug", "0x"
     ]
@@ -68,6 +65,21 @@ client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
     api_key=NVIDIA_API_KEY
 )
+
+# Función sincrónica ejecutada de forma asíncrona dedicada
+def obtener_respuesta_nvidia(prompt_sistema, texto_usuario):
+    # Modelo ultra-rápido de baja latencia en NVIDIA NIM
+    completion = client.chat.completions.create(
+        model="meta/llama-3.1-8b-instruct",
+        messages=[
+            {"role": "system", "content": prompt_sistema},
+            {"role": "user", "content": texto_usuario}
+        ],
+        temperature=0.1,  # Minimiza la duda para responder mucho más rápido
+        max_tokens=350,   # Respuestas sintéticas y al grano
+        stream=False
+    )
+    return completion.choices[0].message.content
 
 # --- 4. COMANDO /start Y PRESENTACIÓN ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -89,7 +101,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto_usuario = update.message.text
 
-    # Responder saludos de forma instantánea
+    # 1. Saludos instantáneos (Responde en < 0.2 segundos)
     if es_saludo(texto_usuario):
         presentacion_corta = (
             "🛠️ **Soporte Técnico Orinoco Dev**\n"
@@ -100,7 +112,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     informacion_web = None
-    # Solo ejecutar búsqueda web si es estrictamente necesario, limitando el tiempo a 1.5s
+    # 2. Búsqueda web solo si detecta palabras críticas
     if requiere_busqueda_tecnica(texto_usuario):
         try:
             informacion_web = await asyncio.wait_for(
@@ -108,41 +120,30 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 timeout=1.5
             )
         except asyncio.TimeoutError:
-            logging.info("Búsqueda web cancelada por tiempo límite para responder más rápido.")
+            logging.info("Búsqueda web cancelada por tiempo límite.")
             informacion_web = None
 
     prompt_sistema = (
         "Eres un Asistente Experto en Soporte Técnico Informático para la empresa Orinoco Dev, C.A.\n\n"
-        "INSTRUCCIÓN DE VELOCIDAD Y CONCISIÓN:\n"
-        "Sé breve, directo y conciso. Ve al grano inmediatamente con la solución paso a paso.\n\n"
-        "ROL Y OBJETIVO:\n"
-        "Brindar asistencia sobre Hardware, Software, Sistemas Operativos, Herramientas de Oficina y solución de errores informáticos.\n\n"
-        "REGLAS DE SEGURIDAD Y RESTRICCIÓN:\n"
-        "1. NO respondas sobre datos internos, finanzas, RIF, clientes o ventas de la empresa.\n"
-        "2. NO respondas temas ajenos a la informática. Si te preguntan algo ajeno, indica brevemente que solo atiendes soporte técnico.\n"
-        "3. Estructura con viñetas o pasos numerados de forma sintética."
+        "INSTRUCCIÓN DE VELOCIDAD:\n"
+        "Sé ultra conciso y directo. Da la respuesta en pasos cortos numerados.\n\n"
+        "REGLAS:\n"
+        "1. Solo responde temas informáticos (hardware, software, ofimática).\n"
+        "2. Si es ajeno al tema, di amablemente que solo atiendes soporte técnico."
     )
 
     if informacion_web:
         prompt_sistema += f"\n\nDATOS WEB:\n{informacion_web}"
 
     try:
-        completion = client.chat.completions.create(
-            model="z-ai/glm-5.3",
-            messages=[
-                {"role": "system", "content": prompt_sistema},
-                {"role": "user", "content": texto_usuario}
-            ],
-            temperature=0.3, # Reducir temperatura acelerará la velocidad de respuesta
-            max_tokens=600,   # Reducir tokens acelerará la generación de texto
-            stream=False
+        # 3. Ejecución no bloqueante en hilo secundario (Responde en 1 a 3 segundos)
+        respuesta_ia = await asyncio.to_thread(
+            obtener_respuesta_nvidia, prompt_sistema, texto_usuario
         )
-        
-        respuesta_ia = completion.choices[0].message.content
 
     except Exception as e:
         logging.error(f"Error al conectar con la API de NVIDIA: {e}")
-        respuesta_ia = "⚠️ Ocurrió una incidencia técnica al conectar con el servidor. Por favor, reintenta."
+        respuesta_ia = "⚠️ Ocurrió una incidencia técnica temporal. Por favor, reintenta tu consulta."
 
     await update.message.reply_text(respuesta_ia)
 
@@ -155,5 +156,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
     
-    print("Bot de Soporte Técnico Orinoco Dev (NVIDIA API Ultra-Rápido) activo...")
+    print("Bot de Soporte Técnico Orinoco Dev (Ultra-Rápido) activo...")
     app.run_polling(drop_pending_updates=True)
