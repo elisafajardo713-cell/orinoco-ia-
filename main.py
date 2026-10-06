@@ -32,12 +32,12 @@ def run_dummy_server():
     server = HTTPServer(("0.0.0.0", port), SimpleHandler)
     server.serve_forever()
 
-# --- 2. BÚSQUEDA WEB RÁPIDA (MAX 2 SEGUNDOS) ---
+# --- 2. BÚSQUEDA WEB RÁPIDA (MAX 1.5 SEGUNDOS) ---
 def ejecutar_busqueda_rapida(query):
     try:
-        query_tecnica = f"solucion soporte tecnico {query}"
+        query_tecnica = f"solucion error {query}"
         with DDGS() as ddgs:
-            # Devuelve los 2 principales resultados de búsqueda
+            # max_results=2 para que devuelva datos mucho más rápido
             resultados = list(ddgs.text(query_tecnica, max_results=2))
             if not resultados:
                 return None
@@ -51,8 +51,12 @@ def ejecutar_busqueda_rapida(query):
         return None
 
 def requiere_busqueda_tecnica(texto):
-    # Activa la búsqueda para cualquier consulta que no sea un saludo básico
-    return True
+    # Solo buscar si nombran un código de error o falla muy especifica
+    palabras_clave_criticas = [
+        "codigo de error", "pantalla azul", "bsod", "driver", "bug", "0x"
+    ]
+    texto_lower = texto.lower()
+    return any(p in texto_lower for p in palabras_clave_criticas)
 
 def es_saludo(texto):
     saludos = ["hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "quien eres", "presentate", "que haces", "ayuda"]
@@ -64,19 +68,6 @@ client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
     api_key=NVIDIA_API_KEY
 )
-
-# Función auxiliar para llamar a la API de NVIDIA de forma asíncrona/no bloqueante
-def llamar_nvidia_api(prompt_sistema, texto_usuario):
-    return client.chat.completions.create(
-        model="z-ai/glm-5.3",
-        messages=[
-            {"role": "system", "content": prompt_sistema},
-            {"role": "user", "content": texto_usuario}
-        ],
-        temperature=0.3, # Reducir temperatura acelerará la velocidad de respuesta
-        max_tokens=600,   # Reducir tokens acelerará la generación de texto
-        stream=False
-    )
 
 # --- 4. COMANDO /start Y PRESENTACIÓN ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -98,7 +89,7 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto_usuario = update.message.text
 
-    # Responder saludos de forma instantánea sin buscar en la web
+    # Responder saludos de forma instantánea
     if es_saludo(texto_usuario):
         presentacion_corta = (
             "🛠️ **Soporte Técnico Orinoco Dev**\n"
@@ -109,12 +100,12 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     informacion_web = None
-    # Ejecuta la búsqueda web para consultas técnicas de forma eficiente
+    # Solo ejecutar búsqueda web si es estrictamente necesario, limitando el tiempo a 1.5s
     if requiere_busqueda_tecnica(texto_usuario):
         try:
             informacion_web = await asyncio.wait_for(
                 asyncio.to_thread(ejecutar_busqueda_rapida, texto_usuario), 
-                timeout=2.0
+                timeout=1.5
             )
         except asyncio.TimeoutError:
             logging.info("Búsqueda web cancelada por tiempo límite para responder más rápido.")
@@ -133,12 +124,18 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     if informacion_web:
-        prompt_sistema += f"\n\nDATOS OBTENIDOS DE LA BÚSQUEDA WEB:\n{informacion_web}"
+        prompt_sistema += f"\n\nDATOS WEB:\n{informacion_web}"
 
     try:
-        # Ejecuta la API de NVIDIA en un hilo secundario para no congelar el bot
-        completion = await asyncio.to_thread(
-            llamar_nvidia_api, prompt_sistema, texto_usuario
+        completion = client.chat.completions.create(
+            model="z-ai/glm-5.3",
+            messages=[
+                {"role": "system", "content": prompt_sistema},
+                {"role": "user", "content": texto_usuario}
+            ],
+            temperature=0.3, # Reducir temperatura acelerará la velocidad de respuesta
+            max_tokens=600,   # Reducir tokens acelerará la generación de texto
+            stream=False
         )
         
         respuesta_ia = completion.choices[0].message.content
