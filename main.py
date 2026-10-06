@@ -69,6 +69,19 @@ client = OpenAI(
     api_key=NVIDIA_API_KEY
 )
 
+# Función auxiliar para llamar a la API de NVIDIA sin bloquear asyncio
+def llamar_nvidia_api(prompt_sistema, texto_usuario):
+    return client.chat.completions.create(
+        model="z-ai/glm-5.3",
+        messages=[
+            {"role": "system", "content": prompt_sistema},
+            {"role": "user", "content": texto_usuario}
+        ],
+        temperature=0.3, # Reducir temperatura acelerará la velocidad de respuesta
+        max_tokens=600,   # Reducir tokens acelerará la generación de texto
+        stream=False
+    )
+
 # --- 4. COMANDO /start Y PRESENTACIÓN ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     presentacion = (
@@ -127,15 +140,9 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prompt_sistema += f"\n\nDATOS WEB:\n{informacion_web}"
 
     try:
-        completion = client.chat.completions.create(
-            model="z-ai/glm-5.3",
-            messages=[
-                {"role": "system", "content": prompt_sistema},
-                {"role": "user", "content": texto_usuario}
-            ],
-            temperature=0.3, # Reducir temperatura acelerará la velocidad de respuesta
-            max_tokens=600,   # Reducir tokens acelerará la generación de texto
-            stream=False
+        # Ejecutamos la llamada en un hilo secundario con asyncio.to_thread para no congelar el bot
+        completion = await asyncio.to_thread(
+            llamar_nvidia_api, prompt_sistema, texto_usuario
         )
         
         respuesta_ia = completion.choices[0].message.content
