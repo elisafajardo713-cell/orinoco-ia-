@@ -99,6 +99,9 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(presentacion_corta, parse_mode="Markdown")
         return
 
+    # Muestra el estado "escribiendo..." en el chat de Telegram mientras procesa
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
     informacion_web = None
     # Solo ejecutar búsqueda web si es estrictamente necesario, limitando el tiempo a 1.5s
     if requiere_busqueda_tecnica(texto_usuario):
