@@ -7,7 +7,6 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, CommandHandler, filters
 from openai import OpenAI
-from duckduckgo_search import DDGS
 
 # Cargar variables de entorno locales
 load_dotenv()
@@ -32,47 +31,35 @@ def run_dummy_server():
     server = HTTPServer(("0.0.0.0", port), SimpleHandler)
     server.serve_forever()
 
-# --- 2. BÚSQUEDA WEB RÁPIDA (MAX 1.5 SEGUNDOS) ---
-def ejecutar_busqueda_rapida(query):
-    try:
-        query_tecnica = f"solucion error {query}"
-        with DDGS() as ddgs:
-            # max_results=2 para que devuelva datos mucho más rápido
-            resultados = list(ddgs.text(query_tecnica, max_results=2))
-            if not resultados:
-                return None
-            
-            texto_resultados = ""
-            for r in resultados:
-                texto_resultados += f"- {r['title']}: {r['body']}\n"
-            return texto_resultados
-    except Exception as e:
-        logging.error(f"Búsqueda web omitida/error: {e}")
-        return None
-
-def requiere_busqueda_tecnica(texto):
-    # Solo buscar si nombran un código de error o falla muy especifica
-    palabras_clave_criticas = [
-        "codigo de error", "pantalla azul", "bsod", "driver", "bug", "0x"
-    ]
-    texto_lower = texto.lower()
-    return any(p in texto_lower for p in palabras_clave_criticas)
-
 def es_saludo(texto):
     saludos = ["hola", "buenas", "buenos dias", "buenas tardes", "buenas noches", "quien eres", "presentate", "que haces", "ayuda"]
     texto_clean = texto.lower().strip()
     return any(s in texto_clean for s in saludos) or len(texto_clean) <= 4
 
-# --- 3. CONFIGURACIÓN CLIENTE NVIDIA NIM ---
+# --- 2. CONFIGURACIÓN CLIENTE NVIDIA NIM ---
 client = OpenAI(
     base_url="https://integrate.api.nvidia.com/v1",
-    api_key=NVIDIA_API_KEY
+    api_key=NVIDIA_API_KEY,
+    timeout=20.0
 )
 
-# --- 4. COMANDO /start Y PRESENTACIÓN ---
+def llamar_nvidia_api(prompt_sistema, texto_usuario):
+    # Modelo oficial y ultra veloz disponible en NVIDIA NIM
+    return client.chat.completions.create(
+        model="meta/llama-3.1-70b-instruct",
+        messages=[
+            {"role": "system", "content": prompt_sistema},
+            {"role": "user", "content": texto_usuario}
+        ],
+        temperature=0.3,
+        max_tokens=700,
+        stream=False
+    )
+
+# --- 3. COMANDO /start Y PRESENTACIÓN ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     presentacion = (
-        "🛠️ **Asistente de Soporte Técnico - Orinoco Dev**\n\n"
+        "🛠️️ **Asistente de Soporte Técnico - Orinoco Dev**\n\n"
         "¡Hola! Soy tu bot de asistencia técnica informática. Estoy diseñado para apoyar en:\n"
         "• Diagnóstico y solución de fallas de **hardware y equipos**.\n"
         "• Mantenimiento y problemas de **software / sistemas operativos**.\n"
@@ -82,7 +69,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(presentacion, parse_mode="Markdown")
 
-# --- 5. RESPUESTA Y LÓGICA PRINCIPAL ---
+# --- 4. RESPUESTA Y LÓGICA PRINCIPAL ---
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
@@ -99,18 +86,6 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(presentacion_corta, parse_mode="Markdown")
         return
 
-    informacion_web = None
-    # Solo ejecutar búsqueda web si es estrictamente necesario, limitando el tiempo a 1.5s
-    if requiere_busqueda_tecnica(texto_usuario):
-        try:
-            informacion_web = await asyncio.wait_for(
-                asyncio.to_thread(ejecutar_busqueda_rapida, texto_usuario), 
-                timeout=1.5
-            )
-        except asyncio.TimeoutError:
-            logging.info("Búsqueda web cancelada por tiempo límite para responder más rápido.")
-            informacion_web = None
-
     prompt_sistema = (
         "Eres un Asistente Experto en Soporte Técnico Informático para la empresa Orinoco Dev, C.A.\n\n"
         "INSTRUCCIÓN DE VELOCIDAD Y CONCISIÓN:\n"
@@ -123,30 +98,23 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "3. Estructura con viñetas o pasos numerados de forma sintética."
     )
 
-    if informacion_web:
-        prompt_sistema += f"\n\nDATOS WEB:\n{informacion_web}"
-
     try:
-        completion = client.chat.completions.create(
-            model="z-ai/glm-5.3",
-            messages=[
-                {"role": "system", "content": prompt_sistema},
-                {"role": "user", "content": texto_usuario}
-            ],
-            temperature=0.3, # Reducir temperatura acelerará la velocidad de respuesta
-            max_tokens=600,   # Reducir tokens acelerará la generación de texto
-            stream=False
+        # Indicar al usuario que el bot está procesando
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+        # Llamar a la API de NVIDIA de forma asíncrona sin congelar el servidor
+        completion = await asyncio.to_thread(
+            llamar_nvidia_api, prompt_sistema, texto_usuario
         )
-        
         respuesta_ia = completion.choices[0].message.content
 
     except Exception as e:
         logging.error(f"Error al conectar con la API de NVIDIA: {e}")
-        respuesta_ia = "⚠️ Ocurrió una incidencia técnica al conectar con el servidor. Por favor, reintenta."
+        respuesta_ia = "⚠️ Ocurrió una incidencia técnica al conectar con el servidor de IA. Por favor, reintenta en un momento."
 
     await update.message.reply_text(respuesta_ia)
 
-# --- 6. INICIALIZACIÓN DEL BOT ---
+# --- 5. INICIALIZACIÓN DEL BOT ---
 if __name__ == "__main__":
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
